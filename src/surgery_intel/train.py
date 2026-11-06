@@ -12,10 +12,9 @@ import os
 
 import numpy as np
 import torch
-from torch.utils.data import DataLoader
 
 from .cholec80 import N_PHASES, class_weights_from_manifest
-from .dataset import PhaseFrameDataset
+from .dataset import PhaseFrameDataset, make_loader
 from .model import EndoNetBaseline
 
 
@@ -34,16 +33,24 @@ def split_weights(manifest, videos):
                         dtype=torch.float32)
 
 
-def run_epoch(model, dl, opt, ce, bce, train):
+def run_epoch(model, dl, opt, ce, bce, train, amp=False, scaler=None):
     model.train(train)
     tot, correct, total = 0.0, 0, 0
+    use_cuda = next(model.parameters()).is_cuda
     for img, ph, tools in dl:
-        pl, tl = model(img)
-        loss = ce(pl, ph) + bce(tl, tools)
+        with torch.amp.autocast(device_type="cuda" if use_cuda else "cpu",
+                                enabled=amp):
+            pl, tl = model(img)
+            loss = ce(pl, ph) + bce(tl, tools)
         if train:
             opt.zero_grad()
-            loss.backward()
-            opt.step()
+            if scaler is not None:
+                scaler.scale(loss).backward()
+                scaler.step(opt)
+                scaler.update()
+            else:
+                loss.backward()
+                opt.step()
         tot += loss.item()
         correct += (pl.argmax(-1) == ph).sum().item()
         total += ph.numel()
@@ -63,36 +70,45 @@ def main():
     ap.add_argument("--img-size", type=int, default=128)
     ap.add_argument("--lr", type=float, default=1e-3)
     ap.add_argument("--out", default="outputs/frame_best.pt")
+    ap.add_argument("--num-workers", type=int, default=2,
+                    help="DataLoader workers (JPEG decode + augment off the train loop)")
+    ap.add_argument("--amp", action="store_true",
+                    help="mixed precision: fp16 on CUDA, bf16 on CPU")
     a = ap.parse_args()
 
     if a.manifest and os.path.isfile(a.manifest):
         tr_vids = a.videos.split(",") if a.videos else None
         va_vids = a.val_videos.split(",") if a.val_videos else []
-        tr = DataLoader(PhaseFrameDataset(a.frames, a.manifest, videos=tr_vids,
-                                          img_size=a.img_size, augment=True),
-                        batch_size=a.batch_size, shuffle=True, num_workers=0)
-        va = DataLoader(PhaseFrameDataset(a.frames, a.manifest, videos=va_vids,
-                                          img_size=a.img_size),
-                        batch_size=a.batch_size, num_workers=0)
+        tr = make_loader(PhaseFrameDataset(a.frames, a.manifest, videos=tr_vids,
+                                           img_size=a.img_size, augment=True),
+                         batch_size=a.batch_size, shuffle=True,
+                         num_workers=a.num_workers)
+        va = make_loader(PhaseFrameDataset(a.frames, a.manifest, videos=va_vids,
+                                           img_size=a.img_size),
+                         batch_size=a.batch_size, num_workers=a.num_workers)
         weights = split_weights(a.manifest, tr_vids or [])
     else:
-        tr = DataLoader(PhaseFrameDataset(None, None), batch_size=8, shuffle=True)
-        va = DataLoader(PhaseFrameDataset(None, None), batch_size=8)
+        tr = make_loader(PhaseFrameDataset(None, None), batch_size=8, shuffle=True,
+                         num_workers=0)
+        va = make_loader(PhaseFrameDataset(None, None), batch_size=8, num_workers=0)
         weights = None
     if len(tr.dataset) == 0:
         raise SystemExit("no training rows (check --manifest/--videos/frames)")
     print(f"train rows={len(tr.dataset)} val rows={len(va.dataset)}")
 
     model = EndoNetBaseline(backbone=a.backbone, pretrained=a.pretrained)
+    scaler = None
+    if a.amp and torch.cuda.is_available():
+        scaler = torch.amp.GradScaler("cuda")
     ce = torch.nn.CrossEntropyLoss(weight=weights)
     bce = torch.nn.BCEWithLogitsLoss()
     opt = torch.optim.Adam(model.parameters(), lr=a.lr)
     best = -1.0
     for ep in range(a.epochs):
-        tl, ta = run_epoch(model, tr, opt, ce, bce, True)
+        tl, ta = run_epoch(model, tr, opt, ce, bce, True, amp=a.amp, scaler=scaler)
         msg = f"ep {ep}: train loss {tl:.4f} acc {ta:.3f}"
         if len(va.dataset):
-            vl, va_acc = run_epoch(model, va, opt, ce, bce, False)
+            vl, va_acc = run_epoch(model, va, opt, ce, bce, False, amp=a.amp)
             msg += f" | val loss {vl:.4f} acc {va_acc:.3f}"
             if va_acc > best:
                 best = va_acc

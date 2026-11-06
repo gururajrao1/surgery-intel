@@ -112,6 +112,8 @@ Trans-SVNet 91 fps, ARST 66 fps incl. backbone. Ours on CPU (synthetic clip):
 * 224px: baseline 35.42 ms/frame (28 fps) → tiny+TCN 3.48 ms, tiny+DualSSM 3.36 ms (~300 fps, 10x faster)
 * Deployment: TorchScript encoder 2.78 ms at 224px; int8-dynamic temporal measured ~same (overhead dominates at feat_dim=128 — kept as an option, not a claim)
 * Backbone ladder (encoder-only, 224px): tiny 93K/3.18 ms → mobilenet 927K/8.06 ms → resnet18 11.2M/37.74 ms
+* Throughput flags: `--num-workers 2` on train / train-temporal / cache / predict (JPEG decode off the main process), `--amp` (fp16 on CUDA, bf16 on CPU). Temporal features load once per video now, not once per sampled clip.
+* Ceiling reference: SurgicalMamba reports 94.6% on Cholec80 at 119–313 fps on a single GPU with a dual-path state-space head — same family as ours, with a ConvNeXt-Tiny backbone and full 40-video training. That is the gap-closer if accuracy is next: bigger backbone + all 40 train videos.
 
 Honest caveats: different hardware from published GPU fps, synthetic frames, and no
 Cholec80 training yet — a 93K-param encoder will not match 93–96% SOTA features.

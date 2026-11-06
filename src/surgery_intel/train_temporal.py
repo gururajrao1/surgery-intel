@@ -27,20 +27,24 @@ class FeatureClipDataset(Dataset):
             rows = sorted(by_video.get(vid, []), key=lambda r: int(r["frame"]))
             fp = os.path.join(feat_dir, f"{vid}.npy")
             if rows and os.path.isfile(fp):
-                self.items.append((fp, np.array([int(r["phase"]) for r in rows])))
+                # Load once: previously every __getitem__ re-read the whole
+                # video file from disk (len = 4 clips/video per epoch).
+                feats = np.load(fp).astype(np.float32)
+                ph = np.array([int(r["phase"]) for r in rows])
+                assert len(feats) == len(ph), f"{fp}: {len(feats)} feats vs {len(ph)} labels"
+                self.items.append((feats, ph))
         self.clip_len = clip_len
 
     def __len__(self):
         return max(len(self.items) * 4, 1)
 
     def __getitem__(self, i):
-        fp, ph = self.items[i % len(self.items)]
-        feats = np.load(fp).astype(np.float32)
+        feats, ph = self.items[i % len(self.items)]
         n = len(feats)
         if n >= self.clip_len:
             s = np.random.randint(0, n - self.clip_len + 1)
             feats, ph = feats[s:s + self.clip_len], ph[s:s + self.clip_len]
-        return torch.from_numpy(feats), torch.from_numpy(ph).long()
+        return torch.from_numpy(feats.copy()), torch.from_numpy(ph.copy()).long()
 
 
 def make_head(feat_dim, head):
@@ -51,21 +55,30 @@ def make_head(feat_dim, head):
     return DualPathSSMHead(feat_dim, num_phases=N_PHASES)
 
 
-def run_epoch(head, dl, opt, weights, train, smooth_lam=0.15, smooth_tau=4.0):
+def run_epoch(head, dl, opt, weights, train, smooth_lam=0.15, smooth_tau=4.0,
+              amp=False, scaler=None):
     head.train(train)
     tot, correct, total = 0.0, 0, 0
+    use_cuda = next(head.parameters()).is_cuda
     ce = torch.nn.CrossEntropyLoss(weight=weights)
     for feats, ph in dl:
-        out = head(feats)
-        stages = out if isinstance(out, list) else [out]
-        loss = 0.0
-        for logits in stages:
-            loss = loss + ce(logits.reshape(-1, N_PHASES), ph.reshape(-1))
-            loss = loss + smooth_loss(logits, tau=smooth_tau, lam=smooth_lam)
+        with torch.amp.autocast(device_type="cuda" if use_cuda else "cpu",
+                                enabled=amp):
+            out = head(feats)
+            stages = out if isinstance(out, list) else [out]
+            loss = 0.0
+            for logits in stages:
+                loss = loss + ce(logits.reshape(-1, N_PHASES), ph.reshape(-1))
+                loss = loss + smooth_loss(logits, tau=smooth_tau, lam=smooth_lam)
         if train:
             opt.zero_grad()
-            loss.backward()
-            opt.step()
+            if scaler is not None:
+                scaler.scale(loss).backward()
+                scaler.step(opt)
+                scaler.update()
+            else:
+                loss.backward()
+                opt.step()
         tot += loss.item()
         pred = stages[-1].argmax(-1)
         correct += (pred == ph).sum().item()
@@ -85,24 +98,32 @@ def main():
     ap.add_argument("--clip-len", type=int, default=256)
     ap.add_argument("--lr", type=float, default=1e-3)
     ap.add_argument("--out", default="outputs/temporal_best.pt")
+    ap.add_argument("--num-workers", type=int, default=2,
+                    help="DataLoader workers feeding clips to the temporal head")
+    ap.add_argument("--amp", action="store_true",
+                    help="mixed precision: fp16 on CUDA, bf16 on CPU")
     a = ap.parse_args()
 
-    from torch.utils.data import DataLoader
+    from .dataset import make_loader
     weights = None
     if os.path.isfile(a.manifest):
         weights = torch.tensor(class_weights_from_manifest(a.manifest))
-    tr = DataLoader(FeatureClipDataset(a.features, a.manifest, "train_fit", a.clip_len),
-                    batch_size=2, shuffle=True)
-    va = DataLoader(FeatureClipDataset(a.features, a.manifest, "val", a.clip_len),
-                    batch_size=2)
+    tr = make_loader(FeatureClipDataset(a.features, a.manifest, "train_fit", a.clip_len),
+                     batch_size=2, shuffle=True, num_workers=a.num_workers)
+    va = make_loader(FeatureClipDataset(a.features, a.manifest, "val", a.clip_len),
+                     batch_size=2, num_workers=a.num_workers)
     head = make_head(a.feat_dim, a.head)
     opt = torch.optim.Adam(head.parameters(), lr=a.lr)
+    scaler = None
+    if a.amp and torch.cuda.is_available():
+        scaler = torch.amp.GradScaler("cuda")
     best = -1.0
     no_val = len(va.dataset) == 0
     for ep in range(a.epochs):
-        tl, ta = run_epoch(head, tr, opt, weights, True, a.smooth_lam, a.smooth_tau)
+        tl, ta = run_epoch(head, tr, opt, weights, True, a.smooth_lam, a.smooth_tau,
+                           amp=a.amp, scaler=scaler)
         vl, va_acc = (tl, ta) if no_val else run_epoch(
-            head, va, opt, weights, False, a.smooth_lam, a.smooth_tau)
+            head, va, opt, weights, False, a.smooth_lam, a.smooth_tau, amp=a.amp)
         print(f"ep {ep}: train loss {tl:.4f} acc {ta:.3f} | val loss {vl:.4f} acc {va_acc:.3f}", flush=True)
         if va_acc > best:
             best = va_acc

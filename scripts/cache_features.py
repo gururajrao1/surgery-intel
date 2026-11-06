@@ -9,7 +9,7 @@ import os
 
 import torch
 
-from surgery_intel.dataset import PhaseFrameDataset
+from surgery_intel.dataset import PhaseFrameDataset, make_loader
 from surgery_intel.model import EndoNetBaseline
 
 
@@ -21,6 +21,9 @@ def main():
     ap.add_argument("--ckpt", required=True)
     ap.add_argument("--out", default="data/features")
     ap.add_argument("--batch-size", type=int, default=32)
+    ap.add_argument("--num-workers", type=int, default=2)
+    ap.add_argument("--amp", action="store_true",
+                    help="mixed precision encode: fp16 on CUDA, bf16 on CPU")
     a = ap.parse_args()
 
     ckpt = torch.load(a.ckpt, map_location="cpu")
@@ -28,6 +31,7 @@ def main():
     model.load_state_dict(ckpt["state"])
     feats_mod = torch.nn.Sequential(model.backbone, torch.nn.Flatten(1),
                                     model.fc7, torch.nn.ReLU())
+    use_cuda = next(model.parameters()).is_cuda
     os.makedirs(a.out, exist_ok=True)
     with torch.no_grad():
         for vid in a.videos:
@@ -35,8 +39,10 @@ def main():
             if len(ds) == 0:
                 print(f"{vid}: no rows, skipped")
                 continue
-            dl = torch.utils.data.DataLoader(ds, batch_size=a.batch_size)
-            feats = torch.cat([feats_mod(img) for img, _, _ in dl]).numpy()
+            dl = make_loader(ds, batch_size=a.batch_size, num_workers=a.num_workers)
+            with torch.amp.autocast(device_type="cuda" if use_cuda else "cpu",
+                                    enabled=a.amp):
+                feats = torch.cat([feats_mod(img) for img, _, _ in dl]).numpy()
             np_path = os.path.join(a.out, f"{vid}.npy")
             __import__("numpy").save(np_path, feats.astype("float32"))
             print(f"{vid}: {feats.shape} -> {np_path}")

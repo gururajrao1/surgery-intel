@@ -4,12 +4,28 @@ import csv
 import os
 from PIL import Image
 import torch
-from torch.utils.data import Dataset
+from torch.utils.data import DataLoader, Dataset
 import torchvision.transforms as T
 
 
 def video_ids(lo, hi):
     return [f"{i:02d}" for i in range(lo, hi + 1)]
+
+
+def make_loader(ds, batch_size, shuffle=False, num_workers=2):
+    """DataLoader with sane throughput defaults.
+
+    Workers move JPEG decode + augment off the training process; pin_memory +
+    persistent workers only apply when workers are actually used. All entry
+    points calling this run under ``if __name__ == "__main__"``, so worker
+    spawn is safe on Windows too.
+    """
+    kw = {}
+    if num_workers and num_workers > 0:
+        kw = {"num_workers": num_workers,
+              "pin_memory": torch.cuda.is_available(),  # warns + no-ops on CPU-only
+              "persistent_workers": True, "prefetch_factor": 2}
+    return DataLoader(ds, batch_size=batch_size, shuffle=shuffle, **kw)
 
 
 def build_manifest(frames_root, out_csv):
