@@ -82,7 +82,8 @@ class EfficientRecognizer(nn.Module):
             h = torch.relu(self.temporal.proj(feat))
             s = self.temporal.short(h.unsqueeze(-1)).squeeze(-1)
             y, new_state = self.temporal.long.step(h, state)
-            fused = torch.relu(self.temporal.fuse(torch.cat([s, y], dim=-1)))
+            fused = self.temporal.drop(
+                torch.relu(self.temporal.fuse(torch.cat([s, y], dim=-1))))
             phase = self.temporal.head(fused)
         else:
             # TCN streaming requires dilated history buffers; fall back to windowed

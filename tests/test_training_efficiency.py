@@ -56,6 +56,18 @@ def test_make_loader_flags():
     assert batch[0].shape[1:] == (3, 250, 250)
 
 
+def test_augmented_dataset_yields_valid_batch():
+    ds = PhaseFrameDataset(None, None)  # synthetic rows (augment flag N/A offline)
+    assert len(ds) == 64
+    img, ph, tools = ds[0]
+    assert img.shape == (3, 250, 250) and img.isfinite().all()
+    # real-path augment transform chain builds and runs on a fake frame
+    ds_aug = PhaseFrameDataset("nonexistent", None, img_size=128, augment=True)
+    from PIL import Image
+    x = ds_aug.tf(Image.new("RGB", (200, 200), (128, 64, 32)))
+    assert x.shape == (3, 128, 128) and x.isfinite().all()
+
+
 def test_frame_run_epoch_amp_runs():
     torch.manual_seed(0)
     model = EndoNetBaseline(backbone="tiny")

@@ -47,12 +47,12 @@ class FeatureClipDataset(Dataset):
         return torch.from_numpy(feats.copy()), torch.from_numpy(ph.copy()).long()
 
 
-def make_head(feat_dim, head):
+def make_head(feat_dim, head, dropout=0.0):
     if head == "tcn":
         return CausalTCNHead(feat_dim, num_phases=N_PHASES)
     if head == "mtcn":
         return MultiStageTCN(feat_dim, num_phases=N_PHASES)
-    return DualPathSSMHead(feat_dim, num_phases=N_PHASES)
+    return DualPathSSMHead(feat_dim, num_phases=N_PHASES, dropout=dropout)
 
 
 def run_epoch(head, dl, opt, weights, train, smooth_lam=0.15, smooth_tau=4.0,
@@ -102,6 +102,8 @@ def main():
                     help="DataLoader workers feeding clips to the temporal head")
     ap.add_argument("--amp", action="store_true",
                     help="mixed precision: fp16 on CUDA, bf16 on CPU")
+    ap.add_argument("--dropout", type=float, default=0.0,
+                    help="temporal-head dropout")
     a = ap.parse_args()
 
     from .dataset import make_loader
@@ -112,7 +114,7 @@ def main():
                      batch_size=2, shuffle=True, num_workers=a.num_workers)
     va = make_loader(FeatureClipDataset(a.features, a.manifest, "val", a.clip_len),
                      batch_size=2, num_workers=a.num_workers)
-    head = make_head(a.feat_dim, a.head)
+    head = make_head(a.feat_dim, a.head, dropout=a.dropout)
     opt = torch.optim.Adam(head.parameters(), lr=a.lr)
     scaler = None
     if a.amp and torch.cuda.is_available():

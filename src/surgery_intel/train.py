@@ -74,6 +74,10 @@ def main():
                     help="DataLoader workers (JPEG decode + augment off the train loop)")
     ap.add_argument("--amp", action="store_true",
                     help="mixed precision: fp16 on CUDA, bf16 on CPU")
+    ap.add_argument("--dropout", type=float, default=0.0,
+                    help="head dropout (0.3-0.4 per surgical few-video studies)")
+    ap.add_argument("--freeze-encoder", action="store_true",
+                    help="freeze backbone, fine-tune heads only")
     a = ap.parse_args()
 
     if a.manifest and os.path.isfile(a.manifest):
@@ -96,7 +100,10 @@ def main():
         raise SystemExit("no training rows (check --manifest/--videos/frames)")
     print(f"train rows={len(tr.dataset)} val rows={len(va.dataset)}")
 
-    model = EndoNetBaseline(backbone=a.backbone, pretrained=a.pretrained)
+    model = EndoNetBaseline(backbone=a.backbone, pretrained=a.pretrained,
+                            dropout=a.dropout)
+    if a.freeze_encoder:
+        model.freeze_encoder()
     scaler = None
     if a.amp and torch.cuda.is_available():
         scaler = torch.amp.GradScaler("cuda")

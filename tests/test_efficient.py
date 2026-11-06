@@ -71,6 +71,22 @@ def test_resnet50_backbone_option():
     assert m.encode(torch.rand(1, 3, 64, 64)).shape == (1, 64)
 
 
+def test_temporal_dropout_eval_identity_and_stream():
+    torch.manual_seed(0)
+    m = EfficientRecognizer(backbone="tiny", feat_dim=64, head="ssm").eval()
+    m.temporal.drop.p = 0.5  # eval mode: still identity
+    vid = torch.rand(1, 4, 3, 64, 64)
+    with torch.no_grad():
+        phase, tools = m(vid)
+        state = m.init_state(1, vid.device)
+        outs = []
+        for t in range(4):
+            p, tl, state = m.stream_step(vid[:, t], state)
+            outs.append(p)
+    assert phase.shape == (1, 4, 7) and torch.isfinite(phase).all()
+    assert torch.isfinite(torch.stack(outs)).all() and torch.isfinite(state).all()
+
+
 def test_scripted_encoder_matches():
     m = EfficientRecognizer(backbone="tiny", feat_dim=64, head="ssm").eval()
     enc = script_encoder(m)

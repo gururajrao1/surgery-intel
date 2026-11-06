@@ -53,7 +53,12 @@ class PhaseFrameDataset(Dataset):
         self.frames_root = frames_root or os.path.join("data", "frames_1fps")
         tf_list = [T.Resize((img_size, img_size))]
         if augment:
-            tf_list += [T.RandomHorizontalFlip(), T.ColorJitter(0.1, 0.1, 0.1)]
+            # Two-stage spirit: geometric offline-style + photometric/blur online,
+            # so the model rarely sees the same frame twice (cf. DIST/MomentNet).
+            tf_list += [T.RandomHorizontalFlip(),
+                        T.RandomRotation(10),
+                        T.ColorJitter(0.2, 0.2, 0.2, 0.05),
+                        T.GaussianBlur(kernel_size=3, sigma=(0.1, 1.5))]
         tf_list.append(T.ToTensor())
         self.tf = T.Compose(tf_list)
         self.items = []

@@ -24,9 +24,12 @@ TOOLS = [f"tool_{i}" for i in range(7)]
 
 class EndoNetBaseline(nn.Module):
     def __init__(self, num_phases=7, num_tools=7, backbone="resnet18",
-                 pretrained=False, feature_dim=512, hidden_dim=256):
+                 pretrained=False, feature_dim=512, hidden_dim=256,
+                 dropout=0.0):
         super().__init__()
         self.backbone_name = backbone
+        self._frozen_encoder = False
+        self.drop = nn.Dropout(dropout)
         if backbone == "resnet18" and not _HAS_TV:
             # Lightweight fallback when torchvision is unavailable (tests/smoke).
             self.backbone = nn.Sequential(
@@ -43,12 +46,31 @@ class EndoNetBaseline(nn.Module):
         self.fc8 = nn.Linear(feature_dim + num_tools, hidden_dim)
         self.fc_phase = nn.Linear(hidden_dim, num_phases)
 
+    def freeze_encoder(self):
+        """Freeze backbone weights (fine-tune heads only); BN stays in eval."""
+        self._frozen_encoder = True
+        for p in self.backbone.parameters():
+            p.requires_grad = False
+        self.backbone.eval()
+
+    def unfreeze_encoder(self):
+        self._frozen_encoder = False
+        for p in self.backbone.parameters():
+            p.requires_grad = True
+
+    def train(self, mode=True):
+        super().train(mode)
+        if mode and self._frozen_encoder:
+            # keep frozen BN stats fixed while heads still train
+            self.backbone.eval()
+        return self
+
     def forward(self, x):
         f = self.backbone(x).flatten(1)
-        h = self.relu(self.fc7(f))
+        h = self.drop(self.relu(self.fc7(f)))
         tool_logits = self.fc_tool(h)
         joint = torch.cat([h, tool_logits], dim=1)
-        j = self.relu(self.fc8(joint))
+        j = self.drop(self.relu(self.fc8(joint)))
         phase_logits = self.fc_phase(j)
         return phase_logits, tool_logits
 

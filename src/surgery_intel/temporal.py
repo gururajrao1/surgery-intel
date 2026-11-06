@@ -122,17 +122,18 @@ class DualPathSSMHead(nn.Module):
     Short path captures instrument motion bursts; long path holds phase context.
     Both paths causal + streaming-capable, total O(L*d).
     """
-    def __init__(self, dim=256, num_phases=7):
+    def __init__(self, dim=256, num_phases=7, dropout=0.0):
         super().__init__()
         self.proj = nn.Linear(dim, dim)
         self.short = CausalConv1d(dim, kernel=3, dilation=1)
         self.long = SelectiveSSM(dim)
         self.fuse = nn.Linear(dim * 2, dim)
+        self.drop = nn.Dropout(dropout)
         self.head = nn.Linear(dim, num_phases)
 
     def forward(self, feats):
         h = torch.relu(self.proj(feats))  # (B,L,D)
         s = self.short(h.transpose(1, 2)).transpose(1, 2)  # short-term
         l, _ = self.long(h)  # long-term
-        fused = torch.relu(self.fuse(torch.cat([s, l], dim=-1)))
+        fused = self.drop(torch.relu(self.fuse(torch.cat([s, l], dim=-1))))
         return self.head(fused)
