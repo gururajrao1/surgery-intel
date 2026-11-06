@@ -23,13 +23,19 @@ def main():
     ap.add_argument("--num-workers", type=int, default=2)
     ap.add_argument("--amp", action="store_true",
                     help="mixed precision inference: fp16 on CUDA, bf16 on CPU")
+    ap.add_argument("--device", default="auto", choices=["auto", "cpu", "cuda"])
     ap.add_argument("--out", required=True)
     a = ap.parse_args()
 
+    import sys
+    sys.path.insert(0, "src")
+    from surgery_intel.train import resolve_device
+    device = resolve_device(a.device)
+    print(f"device: {device}")
     ckpt = torch.load(a.ckpt, map_location="cpu")
-    model = EndoNetBaseline(backbone=ckpt.get("backbone", "mobilenet")).eval()
+    model = EndoNetBaseline(backbone=ckpt.get("backbone", "mobilenet")).eval().to(device)
     model.load_state_dict(ckpt["state"])
-    use_cuda = next(model.parameters()).is_cuda
+    use_cuda = device.type == "cuda"
     rows = []
     with torch.no_grad():
         for vid in a.videos:
@@ -39,7 +45,7 @@ def main():
             for img, _, _ in dl:
                 with torch.amp.autocast(device_type="cuda" if use_cuda else "cpu",
                                         enabled=a.amp):
-                    logits, _ = model(img)
+                    logits, _ = model(img.to(device))
                 for p in logits.argmax(-1).tolist():
                     rows.append({"video": vid, "frame": ds.items[k]["frame"], "phase": p})
                     k += 1

@@ -56,12 +56,15 @@ def make_head(feat_dim, head, dropout=0.0):
 
 
 def run_epoch(head, dl, opt, weights, train, smooth_lam=0.15, smooth_tau=4.0,
-              amp=False, scaler=None):
+              amp=False, scaler=None, device=None):
     head.train(train)
+    dev = device if device is not None else next(head.parameters()).device
     tot, correct, total = 0.0, 0, 0
-    use_cuda = next(head.parameters()).is_cuda
+    use_cuda = dev.type == "cuda"
     ce = torch.nn.CrossEntropyLoss(weight=weights)
     for feats, ph in dl:
+        feats = feats.to(dev, non_blocking=True)
+        ph = ph.to(dev, non_blocking=True)
         with torch.amp.autocast(device_type="cuda" if use_cuda else "cpu",
                                 enabled=amp):
             out = head(feats)
@@ -104,28 +107,34 @@ def main():
                     help="mixed precision: fp16 on CUDA, bf16 on CPU")
     ap.add_argument("--dropout", type=float, default=0.0,
                     help="temporal-head dropout")
+    ap.add_argument("--device", default="auto", choices=["auto", "cpu", "cuda"])
     a = ap.parse_args()
 
     from .dataset import make_loader
+    from .train import resolve_device
+    device = resolve_device(a.device)
+    print(f"device: {device}")
     weights = None
     if os.path.isfile(a.manifest):
-        weights = torch.tensor(class_weights_from_manifest(a.manifest))
+        weights = torch.tensor(class_weights_from_manifest(a.manifest),
+                               device=device)
     tr = make_loader(FeatureClipDataset(a.features, a.manifest, "train_fit", a.clip_len),
                      batch_size=2, shuffle=True, num_workers=a.num_workers)
     va = make_loader(FeatureClipDataset(a.features, a.manifest, "val", a.clip_len),
                      batch_size=2, num_workers=a.num_workers)
-    head = make_head(a.feat_dim, a.head, dropout=a.dropout)
+    head = make_head(a.feat_dim, a.head, dropout=a.dropout).to(device)
     opt = torch.optim.Adam(head.parameters(), lr=a.lr)
     scaler = None
-    if a.amp and torch.cuda.is_available():
+    if a.amp and device.type == "cuda":
         scaler = torch.amp.GradScaler("cuda")
     best = -1.0
     no_val = len(va.dataset) == 0
     for ep in range(a.epochs):
         tl, ta = run_epoch(head, tr, opt, weights, True, a.smooth_lam, a.smooth_tau,
-                           amp=a.amp, scaler=scaler)
+                           amp=a.amp, scaler=scaler, device=device)
         vl, va_acc = (tl, ta) if no_val else run_epoch(
-            head, va, opt, weights, False, a.smooth_lam, a.smooth_tau, amp=a.amp)
+            head, va, opt, weights, False, a.smooth_lam, a.smooth_tau, amp=a.amp,
+            device=device)
         print(f"ep {ep}: train loss {tl:.4f} acc {ta:.3f} | val loss {vl:.4f} acc {va_acc:.3f}", flush=True)
         if va_acc > best:
             best = va_acc

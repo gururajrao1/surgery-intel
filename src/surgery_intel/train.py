@@ -33,11 +33,25 @@ def split_weights(manifest, videos):
                         dtype=torch.float32)
 
 
-def run_epoch(model, dl, opt, ce, bce, train, amp=False, scaler=None):
+def resolve_device(want="auto"):
+    if want == "cuda" or (want == "auto" and torch.cuda.is_available()):
+        if not torch.cuda.is_available():
+            print("cuda requested but unavailable, using cpu")
+            return torch.device("cpu")
+        return torch.device("cuda")
+    return torch.device("cpu")
+
+
+def run_epoch(model, dl, opt, ce, bce, train, amp=False, scaler=None,
+              device=None):
     model.train(train)
+    dev = device if device is not None else next(model.parameters()).device
     tot, correct, total = 0.0, 0, 0
-    use_cuda = next(model.parameters()).is_cuda
+    use_cuda = dev.type == "cuda"
     for img, ph, tools in dl:
+        img = img.to(dev, non_blocking=True)
+        ph = ph.to(dev, non_blocking=True)
+        tools = tools.to(dev, non_blocking=True)
         with torch.amp.autocast(device_type="cuda" if use_cuda else "cpu",
                                 enabled=amp):
             pl, tl = model(img)
@@ -80,6 +94,7 @@ def main():
                     help="head dropout (0.3-0.4 per surgical few-video studies)")
     ap.add_argument("--freeze-encoder", action="store_true",
                     help="freeze backbone, fine-tune heads only")
+    ap.add_argument("--device", default="auto", choices=["auto", "cpu", "cuda"])
     a = ap.parse_args()
 
     if a.manifest and os.path.isfile(a.manifest):
@@ -102,22 +117,26 @@ def main():
         raise SystemExit("no training rows (check --manifest/--videos/frames)")
     print(f"train rows={len(tr.dataset)} val rows={len(va.dataset)}")
 
+    device = resolve_device(a.device)
+    print(f"device: {device}")
     model = EndoNetBaseline(backbone=a.backbone, pretrained=a.pretrained,
-                            dropout=a.dropout)
+                            dropout=a.dropout).to(device)
     if a.freeze_encoder:
         model.freeze_encoder()
     scaler = None
-    if a.amp and torch.cuda.is_available():
+    if a.amp and device.type == "cuda":
         scaler = torch.amp.GradScaler("cuda")
-    ce = torch.nn.CrossEntropyLoss(weight=weights)
+    ce = torch.nn.CrossEntropyLoss(weight=weights.to(device) if weights is not None else None)
     bce = torch.nn.BCEWithLogitsLoss()
     opt = torch.optim.Adam(model.parameters(), lr=a.lr)
     best = -1.0
     for ep in range(a.epochs):
-        tl, ta = run_epoch(model, tr, opt, ce, bce, True, amp=a.amp, scaler=scaler)
+        tl, ta = run_epoch(model, tr, opt, ce, bce, True, amp=a.amp,
+                           scaler=scaler, device=device)
         msg = f"ep {ep}: train loss {tl:.4f} acc {ta:.3f}"
         if len(va.dataset):
-            vl, va_acc = run_epoch(model, va, opt, ce, bce, False, amp=a.amp)
+            vl, va_acc = run_epoch(model, va, opt, ce, bce, False, amp=a.amp,
+                                   device=device)
             msg += f" | val loss {vl:.4f} acc {va_acc:.3f}"
             if va_acc > best:
                 best = va_acc
