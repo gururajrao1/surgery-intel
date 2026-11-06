@@ -2,7 +2,8 @@ import time
 import torch
 from surgery_intel.temporal import CausalTCNHead, DualPathSSMHead, SelectiveSSM
 from surgery_intel.efficient_model import (
-    EfficientRecognizer, count_params, quantize_temporal, script_encoder,
+    EfficientRecognizer, build_backbone, count_params, quantize_temporal,
+    script_encoder,
 )
 from surgery_intel.model import EndoNetBaseline
 
@@ -69,6 +70,18 @@ def test_resnet50_backbone_option():
     import torchvision
     m = EfficientRecognizer(backbone="resnet50", feat_dim=64, head="ssm")
     assert m.encode(torch.rand(1, 3, 64, 64)).shape == (1, 64)
+
+
+def test_new_backbone_options():
+    import torchvision
+    for bname, dim in [("efficientnet_b0", 1280), ("convnext_tiny", 768)]:
+        enc, out_dim = build_backbone(bname)
+        assert out_dim == dim
+        enc.eval()
+        with torch.no_grad():
+            assert enc(torch.rand(1, 3, 128, 128)).shape == (1, dim)
+        m = EfficientRecognizer(backbone=bname, feat_dim=64, head="ssm")
+        assert m.encode(torch.rand(1, 3, 64, 64)).shape == (1, 64)
 
 
 def test_temporal_dropout_eval_identity_and_stream():

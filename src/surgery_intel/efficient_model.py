@@ -26,6 +26,18 @@ def build_backbone(name="tiny", out_dim=256, pretrained=False):
         feats = m.features
         backbone = nn.Sequential(feats, nn.AdaptiveAvgPool2d(1), nn.Flatten())
         return backbone, 576
+    if name == "efficientnet_b0" and has_tv:
+        # SurgeonAssist-Net lineage: EfficientNet-Lite-B0 + GRU matches/beats
+        # ResNet-50 pipelines on Cholec80 at ~7x fewer params.
+        m = tvm.efficientnet_b0(weights=w)
+        backbone = nn.Sequential(m.features, nn.AdaptiveAvgPool2d(1), nn.Flatten())
+        return backbone, 1280
+    if name == "convnext_tiny" and has_tv:
+        # SurgFM evidence: ConvNeXt captures fine surgical detail better than
+        # ViT; surgical pretraining beats ImageNet init on the same backbone.
+        m = tvm.convnext_tiny(weights=w)
+        backbone = nn.Sequential(m.features, nn.AdaptiveAvgPool2d(1), nn.Flatten())
+        return backbone, 768
     # tiny: 3 convs, ~40k params, no dependency
     backbone = nn.Sequential(
         nn.Conv2d(3, 32, 3, stride=2, padding=1), nn.ReLU(inplace=True),

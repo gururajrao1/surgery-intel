@@ -65,7 +65,9 @@ def main():
     ap.add_argument("--val-videos", default=None, help="comma-separated video ids for validation")
     ap.add_argument("--epochs", type=int, default=1)
     ap.add_argument("--batch-size", type=int, default=16)
-    ap.add_argument("--backbone", default="tiny", choices=["tiny", "mobilenet", "resnet18", "resnet50"])
+    ap.add_argument("--backbone", default="tiny",
+                    choices=["tiny", "mobilenet", "efficientnet_b0",
+                             "convnext_tiny", "resnet18", "resnet50"])
     ap.add_argument("--pretrained", action="store_true", help="ImageNet init (recommended)")
     ap.add_argument("--img-size", type=int, default=128)
     ap.add_argument("--lr", type=float, default=1e-3)

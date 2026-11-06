@@ -56,7 +56,7 @@ def main():
 
     # Backbone encoder-only comparison (the accuracy lever: bigger backbone, same head)
     print("-- encoder-only ms/frame --")
-    for bname in ["tiny", "mobilenet", "resnet18"]:
+    for bname in ["tiny", "mobilenet", "efficientnet_b0", "convnext_tiny", "resnet18"]:
         try:
             enc, _ = build_backbone(bname)
             enc.eval()
