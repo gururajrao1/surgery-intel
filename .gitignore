@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+*.pt
+*.pth
+data/frames*/
+data/videos/
+data/cholec80/
+data/*.csv
+*.mp4
+outputs/

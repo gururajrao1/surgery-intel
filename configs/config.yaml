@@ -1,0 +1,13 @@
+backbone: resnet18
+pretrained: true
+num_phases: 7
+num_tools: 7
+feature_dim: 512
+hidden_dim: 256
+lr: 1e-4
+tool_lr_mult: 10.0
+batch_size: 32
+epochs: 2
+fps: 1
+train_ids: [1, 40]
+test_ids: [41, 80]

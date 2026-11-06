@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>surgery-intel — phase cross-check viewer</title>
+<style>
+body{font-family:system-ui,sans-serif;max-width:1000px;margin:24px auto;padding:0 16px;color:#222}
+h1{font-size:20px;margin:0 0 4px}p.sub{color:#666;margin:0 0 16px;font-size:13px}
+.card{border:1px solid #ddd;border-radius:8px;padding:12px;margin:12px 0}
+.row{display:flex;gap:16px;flex-wrap:wrap;align-items:end}
+label{font-size:12px;display:block;margin-bottom:4px;color:#555}
+input[type=file]{font-size:13px}input[type=number]{width:70px}
+.metrics{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
+.metric{border:1px solid #e2e2e2;border-radius:8px;padding:8px 12px;min-width:110px}
+.metric b{display:block;font-size:18px}.metric span{font-size:11px;color:#666}
+.tl{display:grid;grid-template-columns:52px 1fr;gap:4px 8px;align-items:center;margin-top:8px}
+.bar{display:flex;height:26px;border-radius:4px;overflow:hidden;border:1px solid #ccc}
+.bar div{height:100%}.bar.err{outline:2px solid #d33;outline-offset:1px}
+table{border-collapse:collapse;width:100%;font-size:12px;margin-top:8px}
+th,td{border:1px solid #e3e3e3;padding:3px 6px;text-align:left}
+tr.bad td{background:#fdecec}th{background:#f6f6f6}
+.legend{display:flex;gap:8px;flex-wrap:wrap;font-size:11px;margin-top:8px}
+.legend i{display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:4px;vertical-align:-1px}
+#conf{font-size:12px}.note{font-size:12px;color:#666}
+</style>
+</head>
+<body>
+<h1>Phase recognizer cross-check</h1>
+<p class="sub">Offline single file. Load GT + prediction CSVs (<code>frame,phase</code>) or use the built-in demo.</p>
+<div class="card"><div class="row">
+<div><label>Ground truth CSV</label><input type="file" id="gt" accept=".csv"></div>
+<div><label>Predictions CSV</label><input type="file" id="pred" accept=".csv"></div>
+<div><label>Relaxed tolerance (frames)</label><input type="number" id="tol" value="2" min="0" max="50"></div>
+<div><button id="demo">Load built-in demo</button></div>
+</div><div class="metrics" id="metrics"></div></div>
+<div class="card"><b>Timelines</b> <span class="note">GT vs pred, phase colors; red outline = frame counted wrong even after tolerance</span>
+<div class="tl"><span>GT</span><div class="bar" id="barGt"></div><span>Pred</span><div class="bar" id="barPred"></div></div>
+<div class="legend" id="legend"></div></div>
+<div class="card"><b>Confusion (rows GT, cols pred)</b><div id="conf"></div></div>
+<div class="card"><b>Frames</b> <span class="note" id="fcount"></span>
+<table><thead><tr><th>#</th><th>GT</th><th>Pred</th><th>Match</th></tr></thead><tbody id="rows"></tbody></table></div>
+<script>
+"use strict";
+const PHASES=["Preparation","CalotDissection","ClipCut","GBDissection","GBPackaging","CleanCoag","GBRetraction"];
+const COLORS=["#4e79a7","#f28e2b","#e15759","#76b7b2","#59a14f","#edc949","#af7aa1"];
+const N=7;
+let GT=[0,0,0,0,1,1,1,1,1,2,2,2,3,3,3,3,3,4,4,5,5,5,6,6];
+let PRED=[0,0,0,1,1,1,1,2,1,2,2,2,3,3,3,3,4,4,4,5,5,6,6,6];
+function parseCSV(t){const l=t.trim().split(/\r?\n/);const h=l[0].toLowerCase();
+const fi=h.indexOf("frame"),pi=h.indexOf("phase");const a=[];
+for(let i=1;i<l.length;i++){if(!l[i].trim())continue;const c=l[i].split(",");
+a.push(parseInt(c[pi>=0?pi:1],10));}return a.filter(x=>!isNaN(x)&&x>=0&&x<N);}
+function relaxedOK(gt,pred,tol){const n=gt.length;const ok=new Array(n);
+const b=new Set();for(let i=1;i<n;i++)if(gt[i]!==gt[i-1])b.add(i);
+for(let i=0;i<n;i++){if(pred[i]===gt[i]){ok[i]=true;continue;}
+let near=false;b.forEach(bb=>{if(Math.abs(i-bb)<=tol)near=true;});ok[i]=near;}return ok;}
+function scores(gt,pred,tol){const n=Math.min(gt.length,pred.length);const ok=relaxedOK(gt.slice(0,n),pred.slice(0,n),tol);
+const acc=ok.filter(Boolean).length/n;const P=[],R=[],J=[];
+for(let p=0;p<N;p++){let present=false;for(let i=0;i<n;i++)if(gt[i]===p){present=true;break;}
+if(!present)continue;let tp=0,fp=0,fn=0;
+for(let i=0;i<n;i++){if(pred[i]===p&&gt[i]===p)tp++;else if(pred[i]===p)fp++;else if(gt[i]===p)fn++;}
+P.push(tp+fp?tp/(tp+fp):0);R.push(tp+fn?tp/(tp+fn):0);J.push(tp+fp+fn?tp/(tp+fp+fn):0);}
+const m=a=>a.length?a.reduce((x,y)=>x+y,0)/a.length:0;const mp=m(P),mr=m(R);
+return{acc:acc,prec:mp,rec:mr,jac:m(J),f1:mp+mr?2*mp*mr/(mp+mr):0,ok:ok,n:n};}
+function render(){const tol=parseInt(document.getElementById("tol").value||"0",10);
+const s=scores(GT,PRED,tol);const n=s.n;
+document.getElementById("metrics").innerHTML=[["Accuracy",s.acc],["Precision",s.prec],["Recall",s.rec],["Jaccard",s.jac],["F1",s.f1]]
+.map(([k,v])=>'<div class="metric"><b>'+(v*100).toFixed(1)+'%</b><span>'+k+'</span></div>').join("");
+const bg=document.getElementById("barGt"),bp=document.getElementById("barPred");
+bg.innerHTML="";bp.innerHTML="";
+for(let i=0;i<n;i++){const a=document.createElement("div");a.style.background=COLORS[GT[i]];a.style.flex="1";a.title="#"+i+" GT:"+PHASES[GT[i]];bg.appendChild(a);
+const b=document.createElement("div");b.style.background=COLORS[PRED[i]];b.style.flex="1";b.title="#"+i+" pred:"+PHASES[PRED[i]]+(s.ok[i]?"":" MISMATCH");bp.appendChild(b);}
+bp.classList.toggle("err",s.ok.some(x=>!x));
+document.getElementById("legend").innerHTML=PHASES.map((p,i)=>'<span><i style="background:'+COLORS[i]+'"></i>'+i+":"+p+'</span>').join("");
+let cm=[];for(let r=0;r<N;r++){cm.push(new Array(N).fill(0));}
+for(let i=0;i<n;i++)cm[GT[i]][PRED[i]]++;
+let h='<table><tr><th></th>'+PHASES.map((_,i)=>'<th>'+i+'</th>').join("")+'</tr>';
+for(let r=0;r<N;r++)h+='<tr><th>'+r+'</th>'+cm[r].map(c=>'<td>'+c+'</td>').join("")+'</tr>';
+document.getElementById("conf").innerHTML=h+'</table>';
+document.getElementById("fcount").textContent=n+" frames (tol "+tol+")";
+let rows="";for(let i=0;i<n;i++)rows+='<tr class="'+(s.ok[i]?"":"bad")+'"><td>'+i+'</td><td>'+GT[i]+" "+PHASES[GT[i]]+'</td><td>'+PRED[i]+" "+PHASES[PRED[i]]+'</td><td>'+(s.ok[i]?"ok":"WRONG")+'</td></tr>';
+document.getElementById("rows").innerHTML=rows;}
+function read(f,cb){const r=new FileReader();r.onload=()=>cb(parseCSV(r.result));r.readAsText(f);}
+document.getElementById("gt").addEventListener("change",e=>{if(e.target.files[0])read(e.target.files[0],a=>{GT=a;render();});});
+document.getElementById("pred").addEventListener("change",e=>{if(e.target.files[0])read(e.target.files[0],a=>{PRED=a;render();});});
+document.getElementById("tol").addEventListener("input",render);
+document.getElementById("demo").addEventListener("click",()=>{GT=[0,0,0,0,1,1,1,1,1,2,2,2,3,3,3,3,3,4,4,5,5,5,6,6];
+PRED=[0,0,0,1,1,1,1,2,1,2,2,2,3,3,3,3,4,4,4,5,5,6,6,6];render();});
+document.getElementById("legend").innerHTML=PHASES.map((p,i)=>'<span><i style="background:'+COLORS[i]+'"></i>'+i+":"+p+'</span>').join("");
+render();
+</script>
+</body>
+</html>
