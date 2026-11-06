@@ -95,7 +95,16 @@ GT-vs-pred timelines, confusion matrix, and a per-frame match table with adjusta
 | + Temporal SSM (val 84%) | 61.7% | 68.0% | ties the 3-video pipeline; video50 added nothing |
 | Frame mobilenet pretrained (10 vids; val 33) | 51.3% | 59.1% | frame-level still below the 3-video run — composition beats count |
 | + Temporal SSM (val 86%) | 68.6% | 75.1% | NEW BEST: more videos help the temporal head even when frame acc drops |
+| Frame efficientnet_b0 pretrained (10 vids, 8ep, drop 0.3; val 33) | 55.6% | 61.0% | best frame-level yet on video 70 (+4pp over mobilenet) |
+| + Temporal SSM (val 87%) | 68.2% | 72.8% | ties mobilenet on 70, weaker lift — better features, less to smooth |
+| Frame convnext_tiny pretrained (10 vids, 8ep; val 33) | — | — | FAILED to learn (val 0.25 = majority): 28M params need warmup + layer-wise decay, not flat lr |
 | Frame tiny (1 vid) | 37.7% | — | = majority class, learned nothing |
+
+Second test video (50) confirms the ranking generalizes: mobilenet+SSM 60.6% / 67.5%,
+efficientnet+SSM 51.2% / 56.5%. Single-lr training does not scale to big backbones —
+that schedule work (warmup, layer-wise decay) is the next accuracy lever alongside
+surgical pretraining (SurgeNet/SurgFM weights exist but are CaFormer/ConvNeXt-L,
+so they need architecture-matched integration, not a drop-in init).
 
 An intermediate checkpoint hit 50.7% on video70 before continued training memorized
 the 2 training videos — same-distribution validation can't see that cliff (val swings
