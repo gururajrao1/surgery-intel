@@ -97,13 +97,17 @@ GT-vs-pred timelines, confusion matrix, and a per-frame match table with adjusta
 | + Temporal SSM (val 86%) | 68.6% | 75.1% | NEW BEST: more videos help the temporal head even when frame acc drops |
 | Frame efficientnet_b0 pretrained (10 vids, 8ep, drop 0.3; val 33) | 55.6% | 61.0% | best frame-level yet on video 70 (+4pp over mobilenet) |
 | + Temporal SSM (val 87%) | 68.2% | 72.8% | ties mobilenet on 70, weaker lift — better features, less to smooth |
-| Frame convnext_tiny pretrained (10 vids, 8ep, warmup 2, backbone-lr x0.1; val 33) | 71.7% | 76.8% | NEW BEST frame-level: schedule (warmup + gentle backbone lr) unlocked it |
+| Frame convnext_tiny pretrained (10 vids, 8ep, warmup 2, backbone-lr x0.1; val 33) | 71.7% | 76.8% | schedule (warmup + gentle backbone lr) unlocked it |
 | + Temporal SSM drop 0.5 (val 88%) | 71.6% | 76.4% | ties frame-only, better phase balance (J 51 vs 47) — strong features need little smoothing |
+| Frame convnext_tiny pretrained (11 vids +17, 12ep, same schedule; val 33) | 76.2% | 81.3% | more data + longer: best frame-level yet |
+| + Temporal SSM drop 0.5 (val 90%) | 79.1% | 83.5% | NEW BEST on video 70; mixed on 50 (64.8/67.2, temporal hurts there) |
 | Frame convnext_tiny, flat lr (no schedule) | — | — | FAILED (val 0.25): 28M params need warmup + layer-wise decay |
 | Frame tiny (1 vid) | 37.7% | — | = majority class, learned nothing |
 
-Second test video (50) confirms the ranking generalizes: convnext frame 75.7% / 79.3%
-(+SSM 76.1% / 79.0%), mobilenet+SSM 60.6% / 67.5%, efficientnet+SSM 51.2% / 56.5%.
+Second test video (50): convnext-11 frame 67.8% / 71.2% (+SSM 64.8% / 67.2% —
+temporal smoothing hurts this video), mobilenet+SSM 60.6% / 67.5%,
+efficientnet+SSM 51.2% / 56.5%. ConvNeXt leads everywhere at frame level;
+temporal help is video-dependent.
 Single-lr training does not scale to big backbones — warmup + backbone-lr x0.1 fixed it.
 Remaining levers: surgical pretraining (SurgeNet/SurgFM weights exist but are
 CaFormer/ConvNeXt-L, so they need architecture-matched integration, not a drop-in
