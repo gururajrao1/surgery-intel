@@ -42,6 +42,34 @@ def resolve_device(want="auto"):
     return torch.device("cpu")
 
 
+def build_opt(model, lr, backbone_lr_mult=1.0, weight_decay=0.0):
+    """Two-group Adam: pretrained backbone gets lr*mult, fresh heads get lr.
+
+    With mult=1.0 this is numerically identical to a single-group Adam.
+    Frozen (requires_grad=False) params are excluded so --freeze-encoder
+    composes: its group simply shrinks or vanishes.
+    """
+    back_ids = {id(p) for p in model.backbone.parameters()}
+    back, head = [], []
+    for p in model.parameters():
+        if not p.requires_grad:
+            continue
+        (back if id(p) in back_ids else head).append(p)
+    groups = []
+    if back:
+        groups.append({"params": back, "lr": lr * backbone_lr_mult})
+    if head:
+        groups.append({"params": head, "lr": lr})
+    return torch.optim.Adam(groups, weight_decay=weight_decay)
+
+
+def warmup_factor(ep, warmup_epochs):
+    """Linear warmup multiplier: ramps 0 -> 1 over the first N epochs."""
+    if warmup_epochs <= 0:
+        return 1.0
+    return min(1.0, (ep + 1) / warmup_epochs)
+
+
 def run_epoch(model, dl, opt, ce, bce, train, amp=False, scaler=None,
               device=None):
     model.train(train)
@@ -95,6 +123,11 @@ def main():
     ap.add_argument("--freeze-encoder", action="store_true",
                     help="freeze backbone, fine-tune heads only")
     ap.add_argument("--device", default="auto", choices=["auto", "cpu", "cuda"])
+    ap.add_argument("--warmup-epochs", type=int, default=0,
+                    help="linear LR warmup over the first N epochs")
+    ap.add_argument("--backbone-lr-mult", type=float, default=1.0,
+                    help="backbone LR multiplier (e.g. 0.1: gentle on pretrained weights)")
+    ap.add_argument("--weight-decay", type=float, default=0.0)
     a = ap.parse_args()
 
     if a.manifest and os.path.isfile(a.manifest):
@@ -128,9 +161,14 @@ def main():
         scaler = torch.amp.GradScaler("cuda")
     ce = torch.nn.CrossEntropyLoss(weight=weights.to(device) if weights is not None else None)
     bce = torch.nn.BCEWithLogitsLoss()
-    opt = torch.optim.Adam(model.parameters(), lr=a.lr)
+    opt = build_opt(model, a.lr, backbone_lr_mult=a.backbone_lr_mult,
+                    weight_decay=a.weight_decay)
+    base_lrs = [g["lr"] for g in opt.param_groups]
     best = -1.0
     for ep in range(a.epochs):
+        f = warmup_factor(ep, a.warmup_epochs)
+        for g, b in zip(opt.param_groups, base_lrs):
+            g["lr"] = b * f
         tl, ta = run_epoch(model, tr, opt, ce, bce, True, amp=a.amp,
                            scaler=scaler, device=device)
         msg = f"ep {ep}: train loss {tl:.4f} acc {ta:.3f}"

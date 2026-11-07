@@ -1,5 +1,6 @@
 """Efficiency options: cached feature loads, loader flags, AMP run paths."""
 import numpy as np
+import pytest
 import torch
 
 from surgery_intel.dataset import PhaseFrameDataset, make_loader
@@ -66,6 +67,20 @@ def test_augmented_dataset_yields_valid_batch():
     from PIL import Image
     x = ds_aug.tf(Image.new("RGB", (200, 200), (128, 64, 32)))
     assert x.shape == (3, 128, 128) and x.isfinite().all()
+
+
+def test_build_opt_groups_and_freeze():
+    from surgery_intel.train import build_opt, warmup_factor
+    m = EndoNetBaseline(backbone="tiny")
+    opt = build_opt(m, 1e-3, backbone_lr_mult=0.1)
+    assert len(opt.param_groups) == 2
+    assert opt.param_groups[0]["lr"] == pytest.approx(1e-4)
+    assert opt.param_groups[1]["lr"] == pytest.approx(1e-3)
+    m.freeze_encoder()
+    opt = build_opt(m, 1e-3, backbone_lr_mult=0.1)
+    assert len(opt.param_groups) == 1 and opt.param_groups[0]["lr"] == 1e-3
+    assert warmup_factor(0, 2) == 0.5 and warmup_factor(1, 2) == 1.0
+    assert warmup_factor(5, 2) == 1.0 and warmup_factor(0, 0) == 1.0
 
 
 def test_frame_run_epoch_amp_runs():
